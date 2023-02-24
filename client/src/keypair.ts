@@ -43,7 +43,7 @@ function getPrivateKeyFromEnv(env: string) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (line.startsWith(PRIVATE_KEY_ENV_VAR)) {
-      return line.substring(12);
+      return line.substring(12).trim();
     }
   }
 }
