@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 
-const ENV_PATH = path.resolve(__dirname, './', '.env');
+const ENV_PATH = path.resolve(__dirname, '../../', '.env');
 const PRIVATE_KEY_ENV_VAR = 'PRIVATE_KEY';
 
 // Build a class to connect to Sui RPC servers

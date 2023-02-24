@@ -16,38 +16,15 @@ module sui_examples::coin {
     use std::vector;
     use sui::event;
 
-    /// For when a type passed to create_supply is not a one-time witness.
+    // Error constants
     const EBadWitness: u64 = 0;
-
-    /// For when invalid arguments are passed to a function.
     const EInvalidArg: u64 = 1;
-
-    /// For when trying to split a coin more times than its balance allows.
     const ENotEnough: u64 = 2;
 
     /// A coin of type `T` worth `value`. Transferable and storable
     struct Coin<phantom T> has key, store {
         id: UID,
         balance: Balance<T>
-    }
-
-    /// Each Coin type T created through `create_currency` function will have a
-    /// unique instance of CoinMetadata<T> that stores the metadata for this coin type.
-    struct CoinMetadata<phantom T> has key, store {
-        id: UID,
-        /// Number of decimal places the coin uses.
-        /// A coin with `value ` N and `decimals` D should be shown as N / 10^D
-        /// E.g., a coin with `value` 7002 and decimals 3 should be displayed as 7.002
-        /// This is metadata for display usage only.
-        decimals: u8,
-        /// Name for the token
-        name: string::String,
-        /// Symbol for the token
-        symbol: ascii::String,
-        /// Description of the token
-        description: string::String,
-        /// URL for the token logo
-        icon_url: Option<Url>
     }
 
     /// Capability allowing the bearer to mint and burn
@@ -57,17 +34,99 @@ module sui_examples::coin {
         total_supply: Supply<T>
     }
 
-    // === Events ===
+    // === Registering new coin types and managing the coin supply ===
 
-    /// Emitted when new currency is created through the `create_currency` call.
-    /// Contains currency metadata for off-chain discovery. Type parameter `T`
-    /// matches the one in `Coin<T>`
-    struct CurrencyCreated<phantom T> has copy, drop {
-        /// Number of decimal places the coin uses.
-        /// A coin with `value ` N and `decimals` D should be shown as N / 10^D
-        /// E.g., a coin with `value` 7002 and decimals 3 should be displayed as 7.002
-        /// This is metadata for display usage only.
-        decimals: u8
+    /// Create a new currency type `T` as and return the `TreasuryCap` for
+    /// `T` to the caller. Can only be called with a `one-time-witness`
+    /// type, ensuring that there's only one `TreasuryCap` per `T`.
+    public fun create_currency<T: drop>(witness: T, ctx: &mut TxContext): TreasuryCap<T> {
+        // Make sure there's only one instance of the type T
+        assert!(sui::types::is_one_time_witness(&witness), EBadWitness);
+
+        TreasuryCap {
+            id: object::new(ctx),
+            total_supply: balance::create_supply(witness)
+        }
+    }
+
+    /// Create a coin worth `value`. and increase the total supply
+    /// in `cap` accordingly.
+    public fun mint<T>(
+        cap: &mut TreasuryCap<T>, value: u64, ctx: &mut TxContext,
+    ): Coin<T> {
+        Coin {
+            id: object::new(ctx),
+            balance: balance::increase_supply(&mut cap.total_supply, value)
+        }
+    }
+
+    spec schema MintBalance<T> {
+        cap: TreasuryCap<T>;
+        value: u64;
+
+        let before_supply = cap.total_supply.value;
+        let post after_supply = cap.total_supply.value;
+        ensures after_supply == before_supply + value;
+
+        aborts_if before_supply + value >= MAX_U64;
+    }
+
+    spec mint {
+        include MintBalance<T>;
+        aborts_if ctx.ids_created + 1 > MAX_U64;
+    }
+
+    /// Mint some amount of T as a `Balance` and increase the total
+    /// supply in `cap` accordingly.
+    /// Aborts if `value` + `cap.total_supply` >= U64_MAX
+    public fun mint_balance<T>(
+        cap: &mut TreasuryCap<T>, value: u64
+    ): Balance<T> {
+        balance::increase_supply(&mut cap.total_supply, value)
+    }
+
+    spec mint_balance {
+        include MintBalance<T>;
+    }
+
+    /// Destroy the coin `c` and decrease the total supply in `cap`
+    /// accordingly.
+    public fun burn<T>(cap: &mut TreasuryCap<T>, c: Coin<T>): u64 {
+        let Coin { id, balance } = c;
+        object::delete(id);
+        balance::decrease_supply(&mut cap.total_supply, balance)
+    }
+
+    spec schema Burn<T> {
+        cap: TreasuryCap<T>;
+        c: Coin<T>;
+
+        let before_supply = cap.total_supply.value;
+        let post after_supply = cap.total_supply.value;
+        ensures after_supply == before_supply - c.balance.value;
+
+        aborts_if before_supply < c.balance.value;
+    }
+
+    spec burn {
+        include Burn<T>;
+    }
+
+    // ======== Entry Functions ======== 
+    /// Mint `amount` of `Coin` and send it to `recipient`. Invokes `mint()`.
+    public entry fun mint_and_transfer<T>(
+        c: &mut TreasuryCap<T>, amount: u64, recipient: address, ctx: &mut TxContext
+    ) {
+        transfer::transfer(mint(c, amount, ctx), recipient)
+    }
+
+    /// Burn a Coin and reduce the total_supply. Invokes `burn()`.
+    public entry fun burn_<T>(cap: &mut TreasuryCap<T>, c: Coin<T>) {
+        burn(cap, c);
+    }
+
+    spec burn_ {
+        include Burn<T>;
     }
 
     // === Supply <-> TreasuryCap morphing and accessors  ===
@@ -241,187 +300,6 @@ module sui_examples::coin {
         let Coin { id, balance } = c;
         object::delete(id);
         balance::destroy_zero(balance)
-    }
-
-    // === Registering new coin types and managing the coin supply ===
-
-    /// Create a new currency type `T` as and return the `TreasuryCap` for
-    /// `T` to the caller. Can only be called with a `one-time-witness`
-    /// type, ensuring that there's only one `TreasuryCap` per `T`.
-    public fun create_currency<T: drop>(
-        witness: T,
-        decimals: u8,
-        symbol: vector<u8>,
-        name: vector<u8>,
-        description: vector<u8>,
-        icon_url: Option<Url>,
-        ctx: &mut TxContext
-    ): (TreasuryCap<T>, CoinMetadata<T>) {
-        // Make sure there's only one instance of the type T
-        assert!(sui::types::is_one_time_witness(&witness), EBadWitness);
-
-        // Emit Currency metadata as an event.
-        event::emit(CurrencyCreated<T> {
-            decimals
-        });
-
-        (
-            TreasuryCap {
-                id: object::new(ctx),
-                total_supply: balance::create_supply(witness)
-            },
-            CoinMetadata {
-                id: object::new(ctx),
-                decimals,
-                name: string::utf8(name),
-                symbol: ascii::string(symbol),
-                description: string::utf8(description),
-                icon_url
-            }
-        )
-    }
-
-    /// Create a coin worth `value`. and increase the total supply
-    /// in `cap` accordingly.
-    public fun mint<T>(
-        cap: &mut TreasuryCap<T>, value: u64, ctx: &mut TxContext,
-    ): Coin<T> {
-        Coin {
-            id: object::new(ctx),
-            balance: balance::increase_supply(&mut cap.total_supply, value)
-        }
-    }
-
-    spec schema MintBalance<T> {
-        cap: TreasuryCap<T>;
-        value: u64;
-
-        let before_supply = cap.total_supply.value;
-        let post after_supply = cap.total_supply.value;
-        ensures after_supply == before_supply + value;
-
-        aborts_if before_supply + value >= MAX_U64;
-    }
-
-    spec mint {
-        include MintBalance<T>;
-        aborts_if ctx.ids_created + 1 > MAX_U64;
-    }
-
-    /// Mint some amount of T as a `Balance` and increase the total
-    /// supply in `cap` accordingly.
-    /// Aborts if `value` + `cap.total_supply` >= U64_MAX
-    public fun mint_balance<T>(
-        cap: &mut TreasuryCap<T>, value: u64
-    ): Balance<T> {
-        balance::increase_supply(&mut cap.total_supply, value)
-    }
-
-    spec mint_balance {
-        include MintBalance<T>;
-    }
-
-    /// Destroy the coin `c` and decrease the total supply in `cap`
-    /// accordingly.
-    public fun burn<T>(cap: &mut TreasuryCap<T>, c: Coin<T>): u64 {
-        let Coin { id, balance } = c;
-        object::delete(id);
-        balance::decrease_supply(&mut cap.total_supply, balance)
-    }
-
-    spec schema Burn<T> {
-        cap: TreasuryCap<T>;
-        c: Coin<T>;
-
-        let before_supply = cap.total_supply.value;
-        let post after_supply = cap.total_supply.value;
-        ensures after_supply == before_supply - c.balance.value;
-
-        aborts_if before_supply < c.balance.value;
-    }
-
-    spec burn {
-        include Burn<T>;
-    }
-
-    // === Entrypoints ===
-
-    /// Mint `amount` of `Coin` and send it to `recipient`. Invokes `mint()`.
-    public entry fun mint_and_transfer<T>(
-        c: &mut TreasuryCap<T>, amount: u64, recipient: address, ctx: &mut TxContext
-    ) {
-        transfer::transfer(mint(c, amount, ctx), recipient)
-    }
-
-    /// Burn a Coin and reduce the total_supply. Invokes `burn()`.
-    public entry fun burn_<T>(cap: &mut TreasuryCap<T>, c: Coin<T>) {
-        burn(cap, c);
-    }
-
-    spec burn_ {
-        include Burn<T>;
-    }
-
-    // === Update coin metadata ===
-
-    /// Update name of the coin in `CoinMetadata`
-    public entry fun update_name<T>(
-        _treasury: &TreasuryCap<T>, metadata: &mut CoinMetadata<T>, name: string::String
-    ) {
-        metadata.name = name;
-    }
-
-    /// Update the symbol of the coin in `CoinMetadata`
-    public entry fun update_symbol<T>(
-        _treasury: &TreasuryCap<T>, metadata: &mut CoinMetadata<T>, symbol: ascii::String
-    ) {
-        metadata.symbol = symbol;
-    }
-
-    /// Update the description of the coin in `CoinMetadata`
-    public entry fun update_description<T>(
-        _treasury: &TreasuryCap<T>, metadata: &mut CoinMetadata<T>, description: string::String
-    ) {
-        metadata.description = description;
-    }
-
-    /// Update the url of the coin in `CoinMetadata`
-    public entry fun update_icon_url<T>(
-        _treasury: &TreasuryCap<T>, metadata: &mut CoinMetadata<T>, url: ascii::String
-    ) {
-        metadata.icon_url = option::some(url::new_unsafe(url));
-    }
-
-    // === Get coin metadata fields for on-chain consumption ===
-
-    public fun get_decimals<T>(
-        metadata: &CoinMetadata<T>
-    ): u8 {
-        metadata.decimals
-    }
-
-    public fun get_name<T>(
-        metadata: &CoinMetadata<T>
-    ): string::String {
-        metadata.name
-    }
-
-    public fun get_symbol<T>(
-        metadata: &CoinMetadata<T>
-    ): ascii::String {
-        metadata.symbol
-    }
-
-    public fun get_description<T>(
-        metadata: &CoinMetadata<T>
-    ): string::String {
-        metadata.description
-    }
-
-    public fun get_icon_url<T>(
-        metadata: &CoinMetadata<T>
-    ): Option<Url> {
-        metadata.icon_url
     }
 
     // === Test-only code ===
