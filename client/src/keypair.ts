@@ -1,5 +1,4 @@
-import { Ed25519Keypair, normalizeSuiAddress, RawSigner, JsonRpcProvider } from '@mysten/sui.js';
-import crypto from 'crypto';
+import { Ed25519Keypair, normalizeSuiAddress, RawSigner, JsonRpcProvider, fromB64 } from '@mysten/sui.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -31,7 +30,7 @@ async function persistEnv(privateKey: string, existingEnv?: string): Promise<voi
   const data = `${PRIVATE_KEY_ENV_VAR}=${privateKey}\n${existingEnv ? existingEnv : ''}`;
 
   return new Promise((resolve, reject) => {
-    fs.writeFile(ENV_PATH, data, { encoding: 'utf8' }, err => {
+    fs.writeFile(ENV_PATH, data, { encoding: 'utf8' }, (err) => {
       if (err) reject(err);
       resolve();
     });
@@ -44,8 +43,7 @@ function getPrivateKeyFromEnv(env: string) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (line.startsWith(PRIVATE_KEY_ENV_VAR)) {
-      const [_, privateKey] = line.split('=');
-      return privateKey.trim();
+      return line.substring(12);
     }
   }
 }
@@ -64,7 +62,7 @@ async function loadKeypair() {
     const privateKey = getPrivateKeyFromEnv(env);
 
     if (privateKey) {
-      return Ed25519Keypair.fromSecretKey(Uint8Array.from(Buffer.from(privateKey, 'base64')));
+      return Ed25519Keypair.fromSecretKey(fromB64(privateKey));
     }
 
     return await generateAndPersitKeypair(env);
