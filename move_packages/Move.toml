@@ -1,5 +1,5 @@
 [package]
-name = "SuiPackages"
+name = "SuiExamples"
 version = "1.0.0"
 
 [dependencies]

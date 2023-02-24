@@ -9,5 +9,12 @@ import { parseViewResultsFromStruct, bcs } from './capsules_sdk';
 import { provider, getSigner } from './keypair';
 import { assert } from 'superstruct';
 
-let something = getSigner();
-console.log(something);
+// To Do: specify package-ids here
+
+function doSomething() {
+  getSigner().then(signer => {
+    console.log(signer);
+  });
+}
+
+doSomething();

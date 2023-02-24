@@ -1,4 +1,10 @@
-import { Ed25519Keypair, normalizeSuiAddress, RawSigner, JsonRpcProvider, fromB64 } from '@mysten/sui.js';
+import {
+  Ed25519Keypair,
+  normalizeSuiAddress,
+  RawSigner,
+  JsonRpcProvider,
+  fromB64
+} from '@mysten/sui.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -12,7 +18,7 @@ export const provider = new JsonRpcProvider();
 // Use getSigner() to access this; this value is loaded asychronously and cannot be exported directly
 let signer: RawSigner;
 
-async function faucetRequest(address: string) {
+async function requestFromFaucet(address: string) {
   const response = await provider.requestSuiFromFaucet(address);
   return response.transferred_gas_objects;
 }
@@ -26,11 +32,11 @@ async function loadEnv(): Promise<string> {
   });
 }
 
-async function persistEnv(privateKey: string, existingEnv?: string): Promise<void> {
+async function storeInEnv(privateKey: string, existingEnv?: string): Promise<void> {
   const data = `${PRIVATE_KEY_ENV_VAR}=${privateKey}\n${existingEnv ? existingEnv : ''}`;
 
   return new Promise((resolve, reject) => {
-    fs.writeFile(ENV_PATH, data, { encoding: 'utf8' }, (err) => {
+    fs.writeFile(ENV_PATH, data, { encoding: 'utf8' }, err => {
       if (err) reject(err);
       resolve();
     });
@@ -48,10 +54,10 @@ function getPrivateKeyFromEnv(env: string) {
   }
 }
 
-async function generateAndPersitKeypair(existingEnv?: string) {
+async function generateAndStoreKeypair(existingEnv?: string) {
   const keypair = Ed25519Keypair.generate();
   const { privateKey } = keypair.export();
-  await persistEnv(privateKey, existingEnv);
+  await storeInEnv(privateKey, existingEnv);
 
   return keypair;
 }
@@ -62,47 +68,55 @@ async function loadKeypair() {
     const privateKey = getPrivateKeyFromEnv(env);
 
     if (privateKey) {
-      return Ed25519Keypair.fromSecretKey(fromB64(privateKey));
-    }
+      let secretKey = fromB64(privateKey);
 
-    return await generateAndPersitKeypair(env);
+      // This corrects for a bug in the Typescript SDK
+      if (secretKey.length === 64) {
+        secretKey = secretKey.slice(0, 32);
+      }
+
+      return Ed25519Keypair.fromSecretKey(secretKey);
+    } else {
+      return await generateAndStoreKeypair(env);
+    }
   } catch (e: any) {
     if (e.code == 'ENOENT') {
-      return await generateAndPersitKeypair();
+      return await generateAndStoreKeypair();
     }
 
     throw e;
   }
 }
 
-async function getSuiCoins(address: string) {
+async function fetchSuiCoinsForAddress(address: string) {
   const coins = await provider.getCoins(address, '0x2::sui::SUI');
   return coins.data;
 }
 
-async function main() {
+export async function createAsyncValue(): Promise<string> {
+  return new Promise(resolve => {
+    setTimeout(() => {
+      resolve('Hello, world!');
+    }, 1000);
+  });
+}
+
+export async function getSigner(): Promise<RawSigner> {
   const keypair = await loadKeypair();
-  signer = new RawSigner(keypair, provider);
   const address = keypair.getPublicKey().toSuiAddress();
 
   console.log('========== Keypair loaded ==========');
   console.log('Address', normalizeSuiAddress(address));
 
-  const coins = await getSuiCoins(address);
+  const coins = await fetchSuiCoinsForAddress(address);
 
   if (coins.length < 1) {
     console.log('========== Sui Airdrop Requested ==========');
 
-    await faucetRequest(address);
+    await requestFromFaucet(address);
 
     console.log('========== Sui Airdrop Received ==========');
   }
+
+  return new RawSigner(keypair, provider);
 }
-
-export function getSigner(): RawSigner {
-  return signer;
-}
-
-main();
-
-// To Do: export package-ids here
