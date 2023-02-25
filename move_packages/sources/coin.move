@@ -5,16 +5,11 @@
 /// tokens and coins. `Coin` can be described as a secure wrapper around
 /// `Balance` type.
 module sui_examples::coin {
-    use std::string;
-    use std::ascii;
-    use std::option::{Self, Option};
     use sui::balance::{Self, Balance, Supply};
     use sui::tx_context::TxContext;
     use sui::object::{Self, UID};
     use sui::transfer;
-    use sui::url::{Self, Url};
     use std::vector;
-    use sui::event;
 
     // Error constants
     const EBadWitness: u64 = 0;
@@ -37,12 +32,8 @@ module sui_examples::coin {
     // === Registering new coin types and managing the coin supply ===
 
     /// Create a new currency type `T` as and return the `TreasuryCap` for
-    /// `T` to the caller. Can only be called with a `one-time-witness`
-    /// type, ensuring that there's only one `TreasuryCap` per `T`.
+    /// `T` to the caller. In this modified example, there can be many TreasuryCaps
     public fun create_currency<T: drop>(witness: T, ctx: &mut TxContext): TreasuryCap<T> {
-        // Make sure there's only one instance of the type T
-        assert!(sui::types::is_one_time_witness(&witness), EBadWitness);
-
         TreasuryCap {
             id: object::new(ctx),
             total_supply: balance::create_supply(witness)
